@@ -162,7 +162,7 @@ addConverter('getPatternAndMatcher', getPatternAndMatcher)
 
 class Ircd (object):
 
-    __slots__ = ('irc', 'channels','whowas','klines','queues','opered','defcon','pending','logs','limits','netsplit','ping','servers','resolving','stats','patterns','throttled','lastDefcon','god','mx','tokline','toklineresults','dlines', 'invites', 'nicks', 'domains', 'cleandomains', 'ilines', 'klinednicks', 'lastKlineOper', 'oldDlines')
+    __slots__ = ('irc', 'channels','whowas','klines','queues','opered','defcon','pending','logs','limits','netsplit','ping','servers','resolving','stats','patterns','throttled','lastDefcon','god','tokline','toklineresults','dlines', 'invites', 'nicks', 'domains', 'ilines', 'klinednicks', 'lastKlineOper', 'oldDlines')
 
     def __init__(self,irc):
         self.irc = irc
@@ -197,13 +197,11 @@ class Ircd (object):
         self.throttled = False
         self.lastDefcon = False
         self.god = False
-        self.mx = {}
         self.tokline = {}
         self.toklineresults = {}
         self.dlines = []
         self.invites = {}
         self.nicks = {}
-        self.cleandomains = {}
         self.klinednicks = utils.structures.TimeoutQueue(86400*2)
         self.lastKlineOper = ''
         self.oldDlines = utils.structures.TimeoutQueue(86400*7)
@@ -1731,20 +1729,7 @@ class Sigyn(callbacks.Plugin,plugins.ChannelDBHandler):
     def do311 (self,irc,msg):
        i = self.getIrc(irc)
        nick = msg.args[1]
-       if nick in i.mx:
-           ident = msg.args[2]
-           hostmask = '%s!%s@%s' % (nick,ident,msg.args[3])
-           email = i.mx[nick][0]
-           badmail = i.mx[nick][1]
-           mx = i.mx[nick][2]
-           freeze = i.mx[nick][3]
-           del i.mx[nick]
-           mask = self.prefixToMask(irc,hostmask)
-           self.logChannel(irc,'SERVICE: %s registered %s with *@%s is in mxbl (%s)' % (hostmask,nick,email,mx))
-           if badmail and len(email) and len(nick):
-               if not freeze:
-                   irc.queueMsg(ircmsgs.notice(nick,'Your account has been dropped, please register it again with a valid email address (no disposable temporary email)'))
-       elif nick in i.tokline:
+       if nick in i.tokline:
           if not nick in i.toklineresults:
               i.toklineresults[nick] = {}
           ident = msg.args[2]
@@ -1845,64 +1830,12 @@ class Sigyn(callbacks.Plugin,plugins.ChannelDBHandler):
                 irc.queueMsg(ircmsgs.privmsg(nick,"Invitation denied, there are only %s users in %s (%s minimum): contact staffers in #libera-bots if needed." % (msg.args[2],msg.args[1],self.registryValue('minimumUsersInChannel'))))
             del i.invites[msg.args[1]]
 
-    def resolveSnoopy (self,irc,account,email,badmail,freeze):
-       resolver = dns.resolver.Resolver()
-       resolver.timeout = 10
-       resolver.lifetime = 10
-       found = None
-
-       mxbl = set(self.registryValue('mxbl'))
-       i = self.getIrc(irc)
-       if email.lower() in mxbl:
-           found = email
-       else:
-           to_resolve = [(email,'MX'), (email,'A'), (email,'AAAA')]
-           while to_resolve:
-               domain, type = to_resolve.pop(0)
-               try:
-                   res = resolver.query(domain, type)
-               except:
-                   pass
-               else:
-                   for record in res:
-                       record = record.to_text()
-
-                       if type == 'MX':
-                           record = record.split(" ", 1)[1].lower()
-                           # MX records (and their A records) are what we match on most,
-                           # so doing .insert(0, ...) means they're checked first
-                           to_resolve.insert(0, (record, 'A'))
-                           to_resolve.insert(0, (record, 'AAAA'))
-
-                       if record in mxbl:
-                           found = record
-                           break
-                   if found is not None:
-                       break
-
-       if found is not None:
-           i.mx[account] = [email,badmail,found,freeze]
-           if badmail and len(email):
-               irc.queueMsg(ircmsgs.IrcMsg('PRIVMSG NickServ :BADMAIL ADD *@%s %s' % (email,found)))
-               if not freeze:
-                   irc.queueMsg(ircmsgs.IrcMsg('PRIVMSG NickServ :FDROP %s' % account))
-               else:
-                   irc.queueMsg(ircmsgs.IrcMsg('PRIVMSG NickServ :FREEZE %s ON changed email to (%s which is in mxbl %s)' % (account,email,found)))
-           irc.queueMsg(ircmsgs.IrcMsg('WHOIS %s' % account))
-       else:
-           i.cleandomains[email] = True
-
     def handleSnoopMessage (self,irc,msg):
         (targets, text) = msg.args
         text = text.replace('\x02','')
         if msg.nick == 'NickServ' and 'REGISTER:' in text:
             email = text.split('@')[1]
             account = text.split(' ')[0]
-            i = self.getIrc(irc)
-            if not email in i.cleandomains:
-                t = world.SupyThread(target=self.resolveSnoopy,name=format('Snoopy %s', email),args=(irc,account,email,True,False))
-                t.setDaemon(True)
-                t.start()
             account = account.lower().strip()
             q = self.getIrcQueueFor(irc,account,'nsregister',600)
             q.enqueue(email)
@@ -2451,12 +2384,6 @@ class Sigyn(callbacks.Plugin,plugins.ChannelDBHandler):
                    if len(q) > limit:
                        q.reset()
                        self.logChannel(irc,'SERVICE: [%s] %s suspicious AKICK behaviour' % (target,origin))
-            if 'VERIFY:EMAILCHG:' in text:
-                account = text.split(' VERIFY:EMAILCHG')[0]
-                email = text.split('(email: ')[1].split(')')[0].split('@')[1]
-                t = world.SupyThread(target=self.resolveSnoopy,name=format('Snoopy %s', email),args=(irc,account,email,True,True))
-                t.setDaemon(True)
-                t.start()
 
     def handleReportMessage (self,irc,msg):
         (targets, text) = msg.args

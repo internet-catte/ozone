@@ -58,9 +58,6 @@ conf.registerGlobalValue(Sigyn, 'mainChannel',
 conf.registerGlobalValue(Sigyn, 'snoopChannel',
      registry.String("", """channel where services stuff are announced"""))
 
-conf.registerGlobalValue(Sigyn, 'mxbl',
-     registry.CommaSeparatedListOfStrings([''],"""patterns to match"""))
-
 conf.registerGlobalValue(Sigyn, 'ignoredRanges',
      registry.CommaSeparatedListOfStrings([''],"""do not escalate cidr kline on those range"""))
 
